@@ -1,19 +1,15 @@
 /*
-  ==============================================================================
-
-    This file contains the basic framework code for a JUCE plugin processor.
-
-  ==============================================================================
+==============================================================================
+  This file contains the basic framework code for a JUCE plugin processor.
+==============================================================================
 */
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include <JuceHeader.h>
+#include <juce_audio_formats/codecs/flac/compat.h>
 
 using namespace juce::dsp;
-
-
-
 
 //==============================================================================
 PhaserAudioProcessor::PhaserAudioProcessor()
@@ -28,59 +24,18 @@ PhaserAudioProcessor::PhaserAudioProcessor()
     )
 #endif
 {
-    //hay que añadir esto si no no hay cambios audibles
-    //Esta línea se usa para obtener el objeto AudioParameterFloat con 
-    //nombre "Rate" desde el objeto AudioProcessorValueTreeState (apvts)
+
+
 
     numBands = dynamic_cast<juce::AudioParameterInt*>(apvts.getParameter("numBands"));
     jassert(numBands != nullptr);
     int nBands = numBands->get();
 
-    //this->numBands= numBands;
 
-    //for (int i = 0; i < numBands->get(); ++i) {
-
-        //auto phaser = std::make_unique<PhaserBand>();
-
-      //  PhaserBand& bandComp = phasers[i];
-    //acceso a cada banda en un bucle for
-
-       // std::string rateParamName = "Rate_" + std::to_string(i+1);
-        //bandComp.rate = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(rateParamName));
-        //jassert(bandComp.rate != nullptr);
-        /*
-        phasers[i].rate = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("Rate"));
-        jassert(phasers[i].rate != nullptr);
-
-        rateParams.emplace_back(phasers[i].rate);
-        phasers[i].rate = rateParams.back().get();
-        */
-        //phasers[i].rate = rateParam;
-    //}
-
-
-    //phasers[i].rate[i] = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("Rate"));
-    //jassert(phaser.rate != nullptr);
-    /*
-
-    for (int i = 0; i < 3; ++i) {
-
-        phasers[i].rateParam[i] = std::make_unique<juce::AudioParameterFloat>("Rate" + std::to_string(i), "Rate" + std::to_string(i), juce::NormalisableRange<float>(0.f, 40.f, 0.01f), 30.f);
-        //phasers[i].rate = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("Rate" + std::to_string(i)));
-        jassert(phasers[i].rateParam[i] != nullptr);
-        phasers[1].rate = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("Rate"));
-        jassert(phasers[1].rate != nullptr);
-        phasers[2].rate = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("Rate"));
-        jassert(phasers[2].rate != nullptr);
-
-    }*/
-    //inicialización de tamaños de los vectores
-    
-    filters.resize(nBands);//para la estructura de IIR
     freqs.resize(nBands - 1);
     phasers.resize(nBands);
     filterBuffers.resize(nBands);
-    //polifasicos.resize(nBands);
+
 
     int size = phasers.size();
 
@@ -90,37 +45,41 @@ PhaserAudioProcessor::PhaserAudioProcessor()
         jassert(phasers[i].rate != nullptr);
         phasers[i].depth = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(bandPrefix + "Depth"));
         jassert(phasers[i].depth != nullptr);
-    }
+        phasers[i].feedback = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(bandPrefix + "Feedback"));
+        jassert(phasers[i].feedback != nullptr);
+        phasers[i].centreFrequency = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(bandPrefix + "CentreFrequency"));
+        jassert(phasers[i].centreFrequency != nullptr);
+        phasers[i].mix = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(bandPrefix + "Mix"));
+        jassert(phasers[i].mix != nullptr);
 
+    }
+    pan = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("pan"));
+    jassert(pan != nullptr);
     /*
-    phaser.centreFrequency = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("CentreFrequency"));
-    jassert(phaser.centreFrequency != nullptr);
-    phaser.depth = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("Depth"));
-    jassert(phaser.depth != nullptr);
-    phaser.feedback = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("Feedback"));
-    jassert(phaser.feedback != nullptr);
-    phaser.mix = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("Mix"));
-    jassert(phaser.mix != nullptr);
     phaser.bypass = dynamic_cast<juce::AudioParameterBool*>(apvts.getParameter("Bypass"));
     jassert(phaser.bypass != nullptr);
     */
-
+    //CROSSOVERS
     for (int i = 0; i < size - 1; ++i) {
-        const auto bandPrefix = juce::String("Band") + juce::String(i + 1) + juce::String(".");
-        freqs[i].freqCrossover = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(bandPrefix + "freq"));
-        jassert(freqs[i].freqCrossover != nullptr);
-        //midHighCrossover = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("midHighCrossover"));
-        //jassert(midHighCrossover != nullptr);
+        const auto bandPrefix = juce::String("Crossover") + juce::String(i + 1) + juce::String(".");
+        freqs[i] = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(bandPrefix + "freq"));
+        jassert(freqs[i] != nullptr);
     }
-    //LR
+
+
     LP1.setType(juce::dsp::LinkwitzRileyFilterType::lowpass);
     HP1.setType(juce::dsp::LinkwitzRileyFilterType::highpass);
 
+
     AP2.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
+    AP3.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
+    AP4.setType(juce::dsp::LinkwitzRileyFilterType::allpass);
 
     LP2.setType(juce::dsp::LinkwitzRileyFilterType::lowpass);
+    LP3.setType(juce::dsp::LinkwitzRileyFilterType::lowpass);
+
     HP2.setType(juce::dsp::LinkwitzRileyFilterType::highpass);
-    //estructura de filtros IIR 
+    HP3.setType(juce::dsp::LinkwitzRileyFilterType::highpass);
 
 
 }
@@ -205,13 +164,21 @@ void PhaserAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     for (auto& phaser : phasers)
         phaser.prepare(spec);
 
+
+
     LP1.prepare(spec);
     HP1.prepare(spec);
 
     AP2.prepare(spec);
+    AP3.prepare(spec);
+    AP4.prepare(spec);
 
     LP2.prepare(spec);
     HP2.prepare(spec);
+
+    LP3.prepare(spec);
+    HP3.prepare(spec);
+
 
 
     for (auto& buffer : filterBuffers)
@@ -226,7 +193,6 @@ void PhaserAudioProcessor::releaseResources()
 {
     // When playback stops, you can use this as an opportunity to free up any
     // spare memory, etc.
-
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
@@ -271,62 +237,118 @@ void PhaserAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         buffer.clear(i, 0, buffer.getNumSamples());
 
 
-    //updatePhaserSettings
-    //phaser.updatePhaserSettings();
+
+    std::cout << "Current numBands value: " << numBands->get() << std::endl;
+    std::cout << "Current freqs size: " << freqs.size() << std::endl;
 
 
-    //si no se hace esto no se escuchan los cambios ya que no se reemplaza el buffer
-    //for (auto& phaser : phasers) {
-      //  phasers[0].updatePhaserSettings();
-    //}
-    for (int i = 0; i < numBands->get(); ++i) {
-        phasers[i].updatePhaserSettings();
-        phasers.resize(numBands->get());
-    }
 
     for (auto& fb : filterBuffers) {
         fb = buffer;
     }
-    //hacer for aqui
 
-    //frecuencias de corte de los filtros
-    auto lowMidCutoffFreq = freqs[0].freqCrossover->get();
-    LP1.setCutoffFrequency(lowMidCutoffFreq);
-    HP1.setCutoffFrequency(lowMidCutoffFreq);
-    //    invAP1.setCutoffFrequency(lowMidCutoffFreq);
+    if (numBands->get() == 4) {
+        std::cout << "4 bandas " << std::endl;
+        auto lowMidCutoffFreq = freqs[0]->get();
+        LP1.setCutoffFrequency(lowMidCutoffFreq);
+        HP1.setCutoffFrequency(lowMidCutoffFreq);
 
-    auto midHighCutoffFreq = freqs[1].freqCrossover->get();
-    AP2.setCutoffFrequency(midHighCutoffFreq);
-    LP2.setCutoffFrequency(midHighCutoffFreq);
-    HP2.setCutoffFrequency(midHighCutoffFreq);
-    //    invAP2.setCutoffFrequency(midHighCutoffFreq);
 
-    auto fb0Block = juce::dsp::AudioBlock<float>(filterBuffers[0]);
-    auto fb1Block = juce::dsp::AudioBlock<float>(filterBuffers[1]);
-    auto fb2Block = juce::dsp::AudioBlock<float>(filterBuffers[2]);
+        auto midHighCutoffFreq = freqs[1]->get();
+        AP2.setCutoffFrequency(midHighCutoffFreq);
+        AP3.setCutoffFrequency(midHighCutoffFreq);
+        LP2.setCutoffFrequency(midHighCutoffFreq);
+        HP2.setCutoffFrequency(midHighCutoffFreq);
 
-    auto fb0Ctx = juce::dsp::ProcessContextReplacing<float>(fb0Block);
-    auto fb1Ctx = juce::dsp::ProcessContextReplacing<float>(fb1Block);
-    auto fb2Ctx = juce::dsp::ProcessContextReplacing<float>(fb2Block);
+        auto mid2Freq = freqs[2]->get();
+        AP4.setCutoffFrequency(mid2Freq);
+        LP3.setCutoffFrequency(mid2Freq);
+        HP3.setCutoffFrequency(mid2Freq);
 
-    LP1.process(fb0Ctx);
-    AP2.process(fb0Ctx);
+        auto fb0Block = juce::dsp::AudioBlock<float>(filterBuffers[0]);
+        auto fb1Block = juce::dsp::AudioBlock<float>(filterBuffers[1]);
+        auto fb2Block = juce::dsp::AudioBlock<float>(filterBuffers[2]);
+        auto fb3Block = juce::dsp::AudioBlock<float>(filterBuffers[3]);
 
-    HP1.process(fb1Ctx);
-    filterBuffers[2] = filterBuffers[1];
-    LP2.process(fb1Ctx);
 
-    HP2.process(fb2Ctx);
 
-    for (size_t i = 0; i < filterBuffers.size(); ++i)
-    {
-        phasers[i].process(filterBuffers[i]);
+        auto fb0Ctx = juce::dsp::ProcessContextReplacing<float>(fb0Block);
+        auto fb1Ctx = juce::dsp::ProcessContextReplacing<float>(fb1Block);
+        auto fb2Ctx = juce::dsp::ProcessContextReplacing<float>(fb2Block);
+        auto fb3Ctx = juce::dsp::ProcessContextReplacing<float>(fb3Block);
+
+        LP1.process(fb0Ctx);//1
+        AP2.process(fb0Ctx);//2
+        AP3.process(fb0Ctx);//3
+        HP1.process(fb1Ctx);//1
+        filterBuffers[2] = filterBuffers[1];
+
+        AP4.process(fb1Ctx);//2
+        LP2.process(fb1Ctx);//3
+        HP2.process(fb2Ctx);//2
+        filterBuffers[3] = filterBuffers[2];
+        LP3.process(fb2Ctx);//3
+        HP3.process(fb3Ctx);//3
     }
+    if (numBands->get() == 3) {
+        std::cout << "3 bandas" << std::endl;
+        auto lowMidCutoffFreq = freqs[0]->get();
+        LP1.setCutoffFrequency(lowMidCutoffFreq);
+        HP1.setCutoffFrequency(lowMidCutoffFreq);
+
+
+        auto midHighCutoffFreq = freqs[1]->get();
+        AP2.setCutoffFrequency(midHighCutoffFreq);
+        LP2.setCutoffFrequency(midHighCutoffFreq);
+        HP2.setCutoffFrequency(midHighCutoffFreq);
+
+        auto fb0Block = juce::dsp::AudioBlock<float>(filterBuffers[0]);
+        auto fb1Block = juce::dsp::AudioBlock<float>(filterBuffers[1]);
+        auto fb2Block = juce::dsp::AudioBlock<float>(filterBuffers[2]);
+        auto fb0Ctx = juce::dsp::ProcessContextReplacing<float>(fb0Block);
+        auto fb1Ctx = juce::dsp::ProcessContextReplacing<float>(fb1Block);
+        auto fb2Ctx = juce::dsp::ProcessContextReplacing<float>(fb2Block);
+
+
+        LP1.process(fb0Ctx);
+        AP2.process(fb0Ctx);
+
+        HP1.process(fb1Ctx);
+        filterBuffers[2] = filterBuffers[1];
+        LP2.process(fb1Ctx);
+
+        HP2.process(fb2Ctx);
+
+    }
+    if (numBands->get() == 2) {
+        std::cout << "2 bandas " << std::endl;
+        auto lowMidCutoffFreq = freqs[0]->get();
+        LP1.setCutoffFrequency(lowMidCutoffFreq);
+        HP1.setCutoffFrequency(lowMidCutoffFreq);
+        auto fb0Block = juce::dsp::AudioBlock<float>(filterBuffers[0]);
+        auto fb1Block = juce::dsp::AudioBlock<float>(filterBuffers[1]);
+        auto fb0Ctx = juce::dsp::ProcessContextReplacing<float>(fb0Block);
+        auto fb1Ctx = juce::dsp::ProcessContextReplacing<float>(fb1Block);
+        LP1.process(fb0Ctx);
+        HP1.process(fb1Ctx);
+    }
+
+    for (int i = 0; i < numBands->get(); ++i)
+        phasers[i].updatePhaserSettings();
+
+
+    for (size_t i = 0; i < numBands->get(); ++i)
+
+        phasers[i].process(filterBuffers[i]);
+
 
     auto numSamples = buffer.getNumSamples();
     auto numChannels = buffer.getNumChannels();
 
+
+
     buffer.clear();
+    //helper
 
     auto addFilterBand = [nc = numChannels, ns = numSamples](auto& inputBuffer, const auto& source)
     {
@@ -336,13 +358,26 @@ void PhaserAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         }
     };
 
-    addFilterBand(buffer, filterBuffers[0]);
-    addFilterBand(buffer, filterBuffers[1]);
-    addFilterBand(buffer, filterBuffers[2]);
+    for (size_t i = 0; i < numBands->get(); ++i) {
+        addFilterBand(buffer, filterBuffers[i]);
+    }
+    //PANEO
+    if (numChannels == 2) {
+
+        float panParameter = M_PI * (pan->get() + 1) / 4;
+        //TIENE 2 CANALES(stereo), la información que no le mandas a uno se la mandas al otro
+        auto* writePointer = buffer.getWritePointer(0);
+        for (int sample = 0; sample < numSamples; ++sample)
+            writePointer[sample] = writePointer[sample] * cos(panParameter);//CANAL IZQUIERDO
+        writePointer = buffer.getWritePointer(1);
+        for (int sample = 0; sample < numSamples; ++sample)
+            writePointer[sample] = writePointer[sample] * sin(panParameter);//CANAL DERECHO
+    }
 
 }
 
 //==============================================================================
+
 bool PhaserAudioProcessor::hasEditor() const
 {
     return true; // (change this to false if you choose to not supply an editor)
@@ -350,11 +385,9 @@ bool PhaserAudioProcessor::hasEditor() const
 
 juce::AudioProcessorEditor* PhaserAudioProcessor::createEditor()
 {
-    //return new PhaserAudioProcessorEditor (*this);
-    return new juce::GenericAudioProcessorEditor(*this);
+    return new PhaserAudioProcessorEditor(*this);
+    //return new juce::GenericAudioProcessorEditor(*this);
 }
-
-
 
 //==============================================================================
 void PhaserAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
@@ -362,60 +395,68 @@ void PhaserAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
     // You should use this method to store your parameters in the memory block.
     // You could do that either as raw data, or use the XML or ValueTree classes
     // as intermediaries to make it easy to save and load complex data.
+    juce::MemoryOutputStream mos(destData, true);
+    apvts.state.writeToStream(mos);
+
 }
 
 void PhaserAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
     // You should use this method to restore your parameters from this memory block,
     // whose contents will have been created by the getStateInformation() call.
-}
-void resizeVector(std::vector<PhaserBand> ph, int n) {
-    ph.resize(n);
+    auto tree = juce::ValueTree::readFromData(data, sizeInBytes);
+    if (tree.isValid())
+    {
+        apvts.replaceState(tree);
+    }
 }
 juce::AudioProcessorValueTreeState::ParameterLayout PhaserAudioProcessor::createParameterLayout()
 {
     APVTS::ParameterLayout layout;
     using namespace juce;
 
-    //std::vector < AudioParameterFloat* >bandParams;
+
+    layout.add(std::make_unique<AudioParameterInt>("numBands", "Num bandas", 2, 4, 4));
+    auto num = std::make_unique<AudioParameterInt>("numBands", "Num bandas", 2, 4, 4);
+    num->get();
+
+    layout.add(std::make_unique<AudioParameterFloat>("pan", "pan", -1, 1, 0));
+
 
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
-
-
-    //layout.add(std::make_unique<AudioParameterFloat>("lowRate", "Rate", NormalisableRange<float>(0, 40, 0.01f, 1), 30));
-
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < num->get(); ++i) {
         // Prefix para cada parámetro de banda
         const auto bandPrefix = juce::String("Band") + juce::String(i + 1) + juce::String(".");
         // Creamos los parámetros de la banda
-        auto rate = std::make_unique<juce::AudioParameterFloat>(bandPrefix + "Rate", bandPrefix + "Rate", juce::NormalisableRange<float>(0, 5, 0.01f, 1), 1.0f);
+        auto rate = std::make_unique<juce::AudioParameterFloat>(bandPrefix + "Rate", bandPrefix + "Rate", juce::NormalisableRange<float>(0, 5, 0.01f, 1), 1.0f, String(), AudioProcessorParameter::genericParameter, [](float value, int) { return String(value, 0) + "Hz"; }, nullptr);
         params.push_back(std::move(rate));
         auto depth = std::make_unique<AudioParameterFloat>(bandPrefix + "Depth", bandPrefix + "Depth", juce::NormalisableRange<float>(0, 1, 0.01f, 1), 0.5f);
         params.push_back(std::move(depth));
+        // Calcula de forma proporcional los valores de frecuencia de corte para cada banda
+        float minFrequency = 20.0f * std::pow(10, i);
+        float maxFrequency = 20.0f * std::pow(10, i + 1);
+        float defaultFrequency = (minFrequency + maxFrequency) * 0.5f;
+        auto feedback = std::make_unique<AudioParameterFloat>(bandPrefix + "Feedback", bandPrefix + "Feedback", juce::NormalisableRange<float>(0, 1, 0.01f, 1), 0.5f);
+        params.push_back(std::move(feedback));
+        auto centreFrequency = std::make_unique<AudioParameterFloat>(bandPrefix + "CentreFrequency", bandPrefix + "CentreFrequency", juce::NormalisableRange<float>(20, 20000, 1, 1), 1000, String(), AudioProcessorParameter::genericParameter, [](float value, int) { return String(value, 0) + "Hz"; }, nullptr);
+        params.push_back(std::move(centreFrequency));
+        auto mix = std::make_unique<AudioParameterFloat>(bandPrefix + "Mix", bandPrefix + "Mix", juce::NormalisableRange<float>(0, 1, 0.01f, 1), 0.0f);
+        params.push_back(std::move(mix));
 
     }
     layout.add(params.begin(), params.end());
 
-    /*
-    layout.add(std::make_unique<AudioParameterFloat>("CentreFrequency", "CentreFrequency", NormalisableRange<float>(20, 20000, 1, 1), 1000));
 
-    layout.add(std::make_unique<AudioParameterFloat>("Feedback", "Feedback", NormalisableRange<float>(0, 1, 0.01f, 1), 0.5f));
-    layout.add(std::make_unique<AudioParameterFloat>("Mix", "Mix", NormalisableRange<float>(0, 1, 0.01f, 1), 0.5f));//dry/wet
-    layout.add(std::make_unique<AudioParameterBool>("Bypass", "Bypass", false));
-    */
 
-    layout.add(std::make_unique<AudioParameterInt>("numBands", "Num bandas", 1, 10, 3));
-    //actualizar aqui el tamaño
-    //resizeVector(phasers, 0);
 
-    const int numBands = 3; // Número de bandas del phaser
-    std::vector<std::unique_ptr<juce::RangedAudioParameter>> crossoverParameters; // Vector para almacenar los parámetros de frecuencia de corte
+    //const int numBands = 4; // Número de bandas del phaser
+    std::vector<std::unique_ptr<juce::RangedAudioParameter>> crossoverParameters; // Vector para almacenar los parámetros de frecuencia de corte en el metodo
 
-    for (int i = 0; i < numBands - 1; ++i)
+    for (int i = 0; i < num->get() - 1; ++i)
     {
         // Genera el nombre único del parámetro para cada banda
-        std::string parameterName = "Band" + std::to_string(i + 1) + ".freq";
+        std::string parameterName = "Crossover" + std::to_string(i + 1) + ".freq";
 
         // Calcula de forma proporcional los valores de frecuencia de corte para cada banda
         float minFrequency = 20.0f * std::pow(10, i);
@@ -424,20 +465,22 @@ juce::AudioProcessorValueTreeState::ParameterLayout PhaserAudioProcessor::create
 
 
         // Crea el parámetro de frecuencia de corte y agrégalo al layout
-        //juce::AudioParameterFloat* crossoverParameter = new juce::AudioParameterFloat(parameterName, parameterName, juce::NormalisableRange<float>(minFrequency, maxFrequency, 1.0f), defaultFrequency);
-        auto freq = std::make_unique<juce::AudioParameterFloat>(parameterName, parameterName, juce::NormalisableRange<float>(minFrequency, maxFrequency, 1.0f), defaultFrequency);
+
+        auto freq = std::make_unique<juce::AudioParameterFloat>(parameterName, parameterName, juce::NormalisableRange<float>(minFrequency, maxFrequency, 1.0f), defaultFrequency, String(), AudioProcessorParameter::genericParameter, [](float value, int) {return(value < 1000.0f) ? String(value, 0) + "Hz" : String(value / 1000.0f, 1) + "kHz"; }, nullptr);
         crossoverParameters.push_back(std::move(freq));
-        // Agrega el parámetro al vector para su posterior uso
+
 
     }
     layout.add(crossoverParameters.begin(), crossoverParameters.end());
 
 
-    //layout.add(std::make_unique<AudioParameterFloat>("Band1.freq", "Band1.freq", NormalisableRange<float>(20, 999, 1, 1), 400));
-    //layout.add(std::make_unique<AudioParameterFloat>("Band2.freq", "Band2.freq", NormalisableRange<float>(1000, 20000, 1, 1), 2000));
 
     return layout;
 }
+
+
+
+
 
 //==============================================================================
 // This creates new instances of the plugin..
